@@ -24,6 +24,8 @@ from .const import (
 from .coordinator import MrSteamCoordinator
 from .entity import MrSteamEntity
 
+DEFAULT_MS_BRIGHTNESS = 20  # used when turning on with no brightness known
+
 
 def ms_to_ha(value: int) -> int:
     # HA treats brightness 0 as off, so MrSteam 1 maps to HA 1 rather than 0
@@ -90,24 +92,36 @@ class ChromaLight(MrSteamEntity, LightEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.require_steam(self.thing)
         fragment: dict[str, Any] = {}
         pending: dict[str, Any] = {"light_on": True}
+        nudge: dict[str, Any] | None = None
         rgb = kwargs.get(ATTR_RGB_COLOR)
         bri = kwargs.get(ATTR_BRIGHTNESS)
         if rgb is not None:
             color = "#{:02X}{:02X}{:02X}".format(*rgb)
             fragment["light"] = {"type": LIGHT_RGB, "color": color}
             pending["light_rgb"] = tuple(rgb)
+            nudge = {"light": {"type": LIGHT_OFF}}
         elif not self.is_on:
             fragment["light"] = {"type": LIGHT_WHITE, "color": "#FFFFFF"}
             pending["light_rgb"] = (255, 255, 255)
+            nudge = {"light": {"type": LIGHT_OFF}}
         if bri is not None:
             ms = ha_to_ms(bri)
+        elif "light" in fragment:
+            # Never come on at a stale near-invisible level (it was 1-2 of 33).
+            known = self.brightness
+            ms = ha_to_ms(known) if known else DEFAULT_MS_BRIGHTNESS
+            ms = max(ms, 8)
+        else:
+            ms = None
+        if ms is not None:
             fragment["lightBright"] = {"data": ms}
             pending["light_bri"] = ms_to_ha(ms)
         if not fragment:
             return
-        await self.coordinator.async_command(self.thing, fragment, pending)
+        await self.coordinator.async_command(self.thing, fragment, pending, nudge=nudge)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_command(

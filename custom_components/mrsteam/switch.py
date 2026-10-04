@@ -68,10 +68,15 @@ class SteamSwitch(MrSteamEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         program = self._program()
+        if self.coordinator.reads_available and self.reported.get(
+            "deviceSteamStatus"
+        ) == "0001":
+            return  # already running (only knowable with reads)
         await self.coordinator.async_command(
             self.thing,
             {"steam": {"appSteamStatus": True, "appProgram": program}},
             {"steam": True},
+            nudge={"steam": {"appSteamStatus": False}},
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -99,8 +104,12 @@ class AromaSwitch(MrSteamEntity, SwitchEntity):
         return {"requested": self.coordinator.is_pending(self.thing, "aroma")}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.require_steam(self.thing)
         await self.coordinator.async_command(
-            self.thing, {"aroma": {"open": True}}, {"aroma": True}
+            self.thing,
+            {"aroma": {"open": True}},
+            {"aroma": True},
+            nudge={"aroma": {"open": False}},
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:

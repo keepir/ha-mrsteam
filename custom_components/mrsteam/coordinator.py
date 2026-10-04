@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import asyncio
 import logging
 import time
 from typing import Any
@@ -104,6 +105,17 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     def programs(self, thing: str) -> list[dict[str, Any]]:
         return self.reported(thing).get("deviceProgramList") or []
 
+    def steam_running(self, thing: str) -> bool:
+        """Best knowledge of whether a session is running (reported or assumed)."""
+        actual = self.reported(thing).get("deviceSteamStatus") == "0001"
+        return bool(self.effective(thing, "steam", actual))
+
+    def require_steam(self, thing: str) -> None:
+        if not self.steam_running(thing):
+            raise HomeAssistantError(
+                "Start steam first: the controller only accepts this during a session"
+            )
+
     # ── requested-state handling ────────────────────────────────────────────
 
     def set_pending(self, thing: str, key: str, value: Any) -> None:
@@ -134,13 +146,26 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     # ── commands ────────────────────────────────────────────────────────────
 
     async def async_command(
-        self, thing: str, fragment: dict[str, Any], pending: dict[str, Any]
+        self,
+        thing: str,
+        fragment: dict[str, Any],
+        pending: dict[str, Any],
+        nudge: dict[str, Any] | None = None,
     ) -> None:
-        """Mark requested values, publish the desired fragment, refresh later."""
+        """Mark requested values, publish the desired fragment, refresh later.
+
+        The controller only acts on values that CHANGE in the shadow, and the
+        shadow keeps stale values (e.g. a session ended at the touchscreen
+        leaves appSteamStatus: true). `nudge` is published first, ~1.5 s
+        earlier, so the real value is always a change.
+        """
         for key, value in pending.items():
             self.set_pending(thing, key, value)
         self.async_update_listeners()
         try:
+            if nudge is not None:
+                await self.api.async_update_desired(thing, nudge)
+                await asyncio.sleep(1.5)
             await self.api.async_update_desired(thing, fragment)
         except MrSteamError as err:
             for key in pending:

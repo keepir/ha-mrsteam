@@ -16,8 +16,16 @@ Then Settings → Devices & services → Add integration → **MrSteam iSteamX**
 | `sensor.*_steam_head_temperature` | `deviceSteamTemp` (diagnostic; NOT the target setpoint) |
 | `light.*_chroma` | off type 0 · white type 4 `#FFFFFF` · color type 1 `#RRGGBB` · brightness `lightBright.data` 1–33 |
 | `switch.*_aroma` | `aroma.open`, state `deviceAromaStatus` |
+| `number.*_steam_target_temperature` | `appSteamTemp` = (°F − 32) × 10, sent with `appSteamStatus: true`; state `deviceSteamTemp` |
 
-Target temperature is intentionally not exposed yet.
+## Controller rules (confirmed on hardware, Oct 4 2026)
+- **Steam is the gateway.** Duration, temperature, Aroma and Chroma are only accepted during a session; the entities refuse otherwise.
+- **Only changes count.** The controller acts on values that change in the shadow, and the shadow keeps stale values
+  (a session ended at the touchscreen leaves `appSteamStatus: true`). Commands publish a "nudge" first so the real value is always a change.
+- **A `steam` update without `appSteamStatus` reads as "off"**, so duration and temperature always carry `appSteamStatus: true`.
+- The unit resets the target to 110 °F at every start.
+- Chroma on always includes a brightness (never the stale near-invisible level).
+- `mrsteam.send_desired` publishes a raw `state.desired` fragment, for testing.
 
 ## Behaviour notes
 - **Reads:** HTTPS GetThingShadow only. Reads that connect with `client_id == thingName` are never used — they

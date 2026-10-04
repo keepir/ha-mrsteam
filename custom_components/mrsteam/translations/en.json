@@ -40,6 +40,9 @@
     "number": {
       "steam_duration": {
         "name": "Steam duration"
+      },
+      "steam_target_temperature": {
+        "name": "Steam target temperature"
       }
     },
     "sensor": {
@@ -50,7 +53,7 @@
         "name": "Room temperature"
       },
       "steam_head_temperature": {
-        "name": "Steam head temperature"
+        "name": "Steam set temperature"
       }
     },
     "light": {
