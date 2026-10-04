@@ -65,6 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = MrSteamCoordinator(hass, api, things)
     await coordinator.async_config_entry_first_refresh()
+    coordinator.start_listener()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     _register_services(hass)
@@ -77,4 +78,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         coordinator: MrSteamCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         coordinator.async_cancel_refreshes()
+        await hass.async_add_executor_job(coordinator.stop_listener)
     return unloaded

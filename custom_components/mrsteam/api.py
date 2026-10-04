@@ -388,3 +388,152 @@ class MrSteamApi:
         await self.hass.async_add_executor_job(
             self._update_desired_sync, thing, fragment
         )
+
+
+# ── push updates: a persistent shadow subscription ──────────────────────────
+
+
+class ShadowListener:
+    """Receives shadow changes as they happen (no polling).
+
+    Connects with its OWN unique client id (app-ha<random>-dev), never the
+    thing name, so it cannot knock the wall controller off AWS IoT. Each
+    topic is subscribed separately so we learn exactly which ones this
+    identity's IoT policy allows; denied topics are skipped on reconnect.
+    """
+
+    def __init__(self, api: MrSteamApi, things: list[str], on_message) -> None:
+        self.api = api
+        self.things = things
+        self._on_message = on_message  # called from the paho thread
+        self._stop = threading.Event()
+        self._client = None
+        self._thread = threading.Thread(
+            target=self._run, name="mrsteam-shadow-listener", daemon=True
+        )
+        self.denied: set[str] = set()
+        self.granted: set[str] = set()
+        self.status = "starting"
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        client = self._client
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _run(self) -> None:
+        backoff = 5
+        while not self._stop.is_set():
+            try:
+                self._session()
+                backoff = 5
+            except Exception as err:  # noqa: BLE001
+                self.status = f"reconnecting ({err})"
+                _LOGGER.debug("Shadow listener session ended: %s", err)
+            if self._stop.wait(backoff):
+                break
+            backoff = min(backoff * 2, 300)
+
+    @staticmethod
+    def _sub_ok(granted) -> bool:
+        items = granted if isinstance(granted, (list, tuple)) else [granted]
+        for g in items:
+            if getattr(g, "is_failure", False):
+                return False
+            try:
+                if int(getattr(g, "value", g)) >= 0x80:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
+
+    def _session(self) -> None:
+        client = self.api._mqtt_client(f"app-ha{secrets.token_hex(4)}-dev")
+        self._client = client
+        dropped = threading.Event()
+        pending: dict[int, tuple[threading.Event, dict]] = {}
+
+        def _on_disconnect(*_args):
+            dropped.set()
+
+        early: dict[int, object] = {}
+
+        def _on_subscribe(_c, _u, mid, granted, *_args):
+            entry = pending.get(mid)
+            if entry:
+                entry[1]["granted"] = granted
+                entry[0].set()
+            else:
+                early[mid] = granted
+
+        def _on_message(_c, _u, msg):
+            try:
+                payload = json.loads(msg.payload or b"{}")
+            except ValueError:
+                return
+            self._on_message(msg.topic, payload)
+
+        client.on_disconnect = _on_disconnect
+        client.on_subscribe = _on_subscribe
+        client.on_message = _on_message
+        self.api._connect(client)
+        try:
+            for thing in self.things:
+                base = f"$aws/things/{thing}/shadow"
+                for topic in (
+                    f"{base}/update/documents",
+                    f"{base}/update/accepted",
+                    f"{base}/get/accepted",
+                ):
+                    if topic in self.denied:
+                        continue
+                    done = threading.Event()
+                    box: dict = {}
+                    _rc, mid = client.subscribe(topic, 1)
+                    pending[mid] = (done, box)
+                    if mid in early:
+                        box["granted"] = early.pop(mid)
+                        done.set()
+                    if not done.wait(10) or dropped.is_set():
+                        # AWS IoT may drop the connection instead of NAKing.
+                        self.denied.add(topic)
+                        _LOGGER.warning("Shadow topic not allowed: %s", topic)
+                        raise MrSteamError(f"subscribe refused: {topic}")
+                    if self._sub_ok(box.get("granted")):
+                        self.granted.add(topic)
+                    else:
+                        self.denied.add(topic)
+                        _LOGGER.warning("Shadow topic not allowed: %s", topic)
+
+                # Ask for the full current state once, if we can hear the answer.
+                get_topic = f"{base}/get"
+                if f"{base}/get/accepted" in self.granted and get_topic not in self.denied:
+                    client.publish(get_topic, "", qos=1)
+                    if dropped.wait(3):
+                        self.denied.add(get_topic)
+                        raise MrSteamError("shadow/get publish refused")
+
+            listening = sorted(t.rsplit("/shadow/", 1)[1] for t in self.granted)
+            if not listening:
+                self.status = "no live updates allowed"
+                _LOGGER.warning(
+                    "MrSteam: none of the shadow topics are allowed for this "
+                    "identity; staying in assumed state"
+                )
+                self._stop.wait(3600)
+                return
+            self.status = "live (" + ", ".join(listening) + ")"
+            _LOGGER.info("MrSteam live updates on: %s", ", ".join(listening))
+            while not self._stop.is_set() and not dropped.is_set():
+                dropped.wait(30)
+            if not self._stop.is_set():
+                raise MrSteamError("connection dropped")
+        finally:
+            self._client = None
+            self.api._close(client)

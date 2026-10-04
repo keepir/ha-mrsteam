@@ -12,7 +12,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import MrSteamApi, MrSteamAuthError, MrSteamError, ReadsUnavailable
+from .api import MrSteamApi, MrSteamAuthError, MrSteamError, ReadsUnavailable, ShadowListener
 from .const import (
     DOMAIN,
     PENDING_SECONDS,
@@ -66,6 +66,8 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self._pending: dict[str, dict[str, tuple[Any, float]]] = {}
         self._refresh_unsubs: list = []
         self.reads_available = True
+        self.push_active = False
+        self.listener: ShadowListener | None = None
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         data: dict[str, dict[str, Any]] = {}
@@ -73,8 +75,8 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             for thing in self.things:
                 data[thing] = await self.api.async_get_shadow(thing)
         except ReadsUnavailable:
-            # No safe read path: stop polling, keep whatever we had.
-            self.reads_available = False
+            # No HTTPS reads: stop polling. Live push (if allowed) keeps state.
+            self.reads_available = self.push_active
             self.update_interval = None
             return {
                 thing: (self.data or {}).get(thing) or {"desired": {}, "reported": {}}
@@ -93,6 +95,64 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         secs = POLL_RUNNING_HTTPS if running else POLL_IDLE_HTTPS
         self.update_interval = timedelta(seconds=secs)
         return data
+
+    # ── push updates ────────────────────────────────────────────────────────
+
+    def start_listener(self) -> None:
+        self.listener = ShadowListener(
+            self.api, list(self.things), self._push_from_thread
+        )
+        self.listener.start()
+
+    def stop_listener(self) -> None:
+        if self.listener:
+            self.listener.stop()
+
+    def _push_from_thread(self, topic: str, payload: dict) -> None:
+        self.hass.loop.call_soon_threadsafe(self._handle_push, topic, payload)
+
+    @staticmethod
+    def _merge(base: dict, new: dict) -> dict:
+        out = dict(base)
+        for key, value in (new or {}).items():
+            if value is None:
+                out.pop(key, None)
+            elif isinstance(value, dict) and isinstance(out.get(key), dict):
+                out[key] = MrSteamCoordinator._merge(out[key], value)
+            else:
+                out[key] = value
+        return out
+
+    @callback
+    def _handle_push(self, topic: str, payload: dict) -> None:
+        try:
+            thing = topic.split("/")[2]
+        except IndexError:
+            return
+        if thing not in self.things:
+            return
+        current = dict((self.data or {}).get(thing) or {"desired": {}, "reported": {}})
+        if topic.endswith("/update/documents"):
+            state = (payload.get("current") or {}).get("state") or {}
+            current = {"desired": state.get("desired") or {}, "reported": state.get("reported") or {}}
+        elif topic.endswith("/get/accepted"):
+            state = payload.get("state") or {}
+            current = {"desired": state.get("desired") or {}, "reported": state.get("reported") or {}}
+        elif topic.endswith("/update/accepted"):
+            state = payload.get("state") or {}
+            current = {
+                "desired": self._merge(current.get("desired") or {}, state.get("desired") or {}),
+                "reported": self._merge(current.get("reported") or {}, state.get("reported") or {}),
+            }
+        else:
+            return
+        if not self.push_active:
+            _LOGGER.info("MrSteam: live state received; leaving assumed-state mode")
+        self.push_active = True
+        self.reads_available = True
+        data = dict(self.data or {})
+        data[thing] = current
+        self.async_set_updated_data(data)
 
     # ── accessors ───────────────────────────────────────────────────────────
 

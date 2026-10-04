@@ -28,9 +28,12 @@ Then Settings → Devices & services → Add integration → **MrSteam iSteamX**
 - `mrsteam.send_desired` publishes a raw `state.desired` fragment, for testing.
 
 ## Behaviour notes
-- **Reads:** HTTPS GetThingShadow only. Reads that connect with `client_id == thingName` are never used — they
-  kick the wall controller off the cloud. If HTTPS is denied (current state), entities run in **assumed state**:
-  they show the last commanded value, with no polling.
+- **Live updates (push, no polling):** a persistent MQTT connection with its own unique `app-ha<random>-dev` client ID
+  subscribes to the shadow's `update/documents`, `update/accepted` and `get/accepted` topics, so changes made at the
+  touchscreen or in the app arrive as they happen. It never uses the thing name as a client ID (that kicks the wall
+  controller off AWS IoT). Each topic is subscribed separately; denied ones are logged and skipped. The steam switch's
+  `live_updates` attribute shows which topics are active. If none are allowed, entities fall back to assumed state.
+- **HTTPS reads:** GetThingShadow is tried first; it is currently denied for this identity, so push is the read path.
 - **Commands:** MQTT over websockets, QoS 1, unique `app-ha<random>-dev` client ID, `clientToken: app-<thingName>`,
   partial `state.desired` only. Refreshes 4 s and 12 s after each command.
 - **Requested state:** a commanded value shows immediately (attribute `requested: true`) until the unit confirms it or

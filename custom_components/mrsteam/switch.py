@@ -57,6 +57,11 @@ class SteamSwitch(MrSteamEntity, SwitchEntity):
             "remaining_minutes": hex_minutes(rep.get("deviceSteamRemainTime")),
             "steam_alert": rep.get("deviceSteamAlert"),
             "program": (self._program() or {}).get("program_name"),
+            "live_updates": (
+                self.coordinator.listener.status
+                if self.coordinator.listener
+                else "off"
+            ),
         }
 
     def _program(self) -> dict | None:

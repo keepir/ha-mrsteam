@@ -98,11 +98,16 @@ class ChromaLight(MrSteamEntity, LightEntity):
         nudge: dict[str, Any] | None = None
         rgb = kwargs.get(ATTR_RGB_COLOR)
         bri = kwargs.get(ATTR_BRIGHTNESS)
+        was_on = self.is_on
         if rgb is not None:
             color = "#{:02X}{:02X}{:02X}".format(*rgb)
             fragment["light"] = {"type": LIGHT_RGB, "color": color}
             pending["light_rgb"] = tuple(rgb)
-            nudge = {"light": {"type": LIGHT_OFF}}
+            # Only nudge when turning on from off (the shadow may still hold
+            # this exact color from a past session). A color change while on
+            # is always a real change, so it goes straight through, no flash.
+            if not was_on:
+                nudge = {"light": {"type": LIGHT_OFF}}
         elif not self.is_on:
             fragment["light"] = {"type": LIGHT_WHITE, "color": "#FFFFFF"}
             pending["light_rgb"] = (255, 255, 255)
