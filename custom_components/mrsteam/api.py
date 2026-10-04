@@ -402,10 +402,13 @@ class ShadowListener:
     identity's IoT policy allows; denied topics are skipped on reconnect.
     """
 
-    def __init__(self, api: MrSteamApi, things: list[str], on_message) -> None:
+    def __init__(
+        self, api: MrSteamApi, things: list[str], on_message, on_status=None
+    ) -> None:
         self.api = api
         self.things = things
         self._on_message = on_message  # called from the paho thread
+        self._on_status = on_status
         self._stop = threading.Event()
         self._client = None
         self._thread = threading.Thread(
@@ -413,7 +416,18 @@ class ShadowListener:
         )
         self.denied: set[str] = set()
         self.granted: set[str] = set()
-        self.status = "starting"
+        self._status = "starting"
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+    @status.setter
+    def status(self, value: str) -> None:
+        if value != self._status:
+            self._status = value
+            if self._on_status:
+                self._on_status(value)
 
     def start(self) -> None:
         self._thread.start()

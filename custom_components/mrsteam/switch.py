@@ -15,14 +15,6 @@ from .entity import MrSteamEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-# TEST-BUILD FALLBACK ONLY (v0.1.x): used when deviceProgramList can't be read.
-# This is the captured Default program for the user's unit; v0.2 reads it live.
-FALLBACK_PROGRAM = {
-    "add_time": "2026-07-20 18:52:12",
-    "id": 3,
-    "profiles_id": 2,
-    "program_name": "Default",
-}
 
 
 async def async_setup_entry(
@@ -69,7 +61,9 @@ class SteamSwitch(MrSteamEntity, SwitchEntity):
         for prog in programs:
             if str(prog.get("program_name", "")).lower() == "default":
                 return prog
-        return programs[0] if programs else FALLBACK_PROGRAM
+        if programs:
+            return programs[0]
+        return self.coordinator.cached_program
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         program = self._program()
@@ -79,7 +73,7 @@ class SteamSwitch(MrSteamEntity, SwitchEntity):
             return  # already running (only knowable with reads)
         await self.coordinator.async_command(
             self.thing,
-            {"steam": {"appSteamStatus": True, "appProgram": program}},
+            {"steam": {"appSteamStatus": True, "appProgram": program or "default"}},
             {"steam": True},
             nudge={"steam": {"appSteamStatus": False}},
         )

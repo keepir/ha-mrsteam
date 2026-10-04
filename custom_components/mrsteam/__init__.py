@@ -63,7 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not things:
         raise ConfigEntryNotReady("No MrSteam devices found on this account")
 
-    coordinator = MrSteamCoordinator(hass, api, things)
+    coordinator = MrSteamCoordinator(hass, api, things, entry)
     await coordinator.async_config_entry_first_refresh()
     coordinator.start_listener()
 

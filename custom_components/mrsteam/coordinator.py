@@ -52,7 +52,11 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Polls every discovered thing; data = {thingName: {'desired', 'reported'}}."""
 
     def __init__(
-        self, hass: HomeAssistant, api: MrSteamApi, things: list[dict[str, Any]]
+        self,
+        hass: HomeAssistant,
+        api: MrSteamApi,
+        things: list[dict[str, Any]],
+        entry=None,
     ) -> None:
         super().__init__(
             hass,
@@ -68,6 +72,10 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         self.reads_available = True
         self.push_active = False
         self.listener: ShadowListener | None = None
+        self.entry = entry
+        # Last program object seen live, persisted so steam can start with the
+        # full object (the reliable form) even before any report arrives.
+        self.cached_program: dict | None = (entry.options.get("program") if entry else None)
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         data: dict[str, dict[str, Any]] = {}
@@ -100,7 +108,12 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     def start_listener(self) -> None:
         self.listener = ShadowListener(
-            self.api, list(self.things), self._push_from_thread
+            self.api,
+            list(self.things),
+            self._push_from_thread,
+            lambda _status: self.hass.loop.call_soon_threadsafe(
+                self.async_update_listeners
+            ),
         )
         self.listener.start()
 
@@ -146,6 +159,7 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
             }
         else:
             return
+        self._remember_program(current)
         if not self.push_active:
             _LOGGER.info("MrSteam: live state received; leaving assumed-state mode")
         self.push_active = True
@@ -153,6 +167,24 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         data = dict(self.data or {})
         data[thing] = current
         self.async_set_updated_data(data)
+
+    @callback
+    def _remember_program(self, state: dict) -> None:
+        programs = ((state.get("reported") or {}).get("devices") or {}).get(
+            "deviceProgramList"
+        ) or []
+        if not programs:
+            return
+        chosen = next(
+            (p for p in programs if str(p.get("program_name", "")).lower() == "default"),
+            programs[0],
+        )
+        if chosen != self.cached_program:
+            self.cached_program = chosen
+            if self.entry is not None:
+                self.hass.config_entries.async_update_entry(
+                    self.entry, options={**self.entry.options, "program": chosen}
+                )
 
     # ── accessors ───────────────────────────────────────────────────────────
 
