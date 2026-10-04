@@ -1,0 +1,11 @@
+send_desired:
+  fields:
+    fragment:
+      required: true
+      example: '{"steam": {"appSteamStatus": true, "appSteamTime": "0019"}}'
+      selector:
+        object:
+    thing_name:
+      required: false
+      selector:
+        text:

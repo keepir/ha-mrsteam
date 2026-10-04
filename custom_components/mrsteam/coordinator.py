@@ -34,10 +34,14 @@ def hex_minutes(value: Any) -> int | None:
         return None
 
 
-def raw_to_celsius(value: Any) -> float | None:
-    """MrSteam temperature raw -> °C.  raw = °C*18 = (°F-32)*10."""
+def raw_to_celsius(value: Any, hex_string: bool) -> float | None:
+    """MrSteam temperature raw -> °C.  raw = °C*18 = (°F-32)*10.
+
+    deviceRoomTemp is a hex string ("023A"); deviceSteamTemp is decimal and
+    arrives as either an int (780) or a decimal string ("780").
+    """
     try:
-        raw = int(str(value), 16) if isinstance(value, str) else int(value)
+        raw = int(str(value), 16 if hex_string else 10)
     except (TypeError, ValueError):
         return None
     return round(raw / 18, 3)  # keep precision so °F display is exact

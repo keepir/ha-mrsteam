@@ -3,14 +3,48 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
 from .api import MrSteamApi, MrSteamAuthError, MrSteamError
 from .const import CONF_MODEL_NUMBER, DEFAULT_MODEL_NUMBER, DOMAIN
 from .coordinator import MrSteamCoordinator
 
 PLATFORMS = [Platform.LIGHT, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+
+SERVICE_SEND_DESIRED = "send_desired"
+SEND_DESIRED_SCHEMA = vol.Schema(
+    {
+        vol.Required("fragment"): dict,
+        vol.Optional("thing_name"): cv.string,
+    }
+)
+
+
+def _register_services(hass: HomeAssistant) -> None:
+    """Test/diagnostic service: publish an arbitrary state.desired fragment."""
+    if hass.services.has_service(DOMAIN, SERVICE_SEND_DESIRED):
+        return
+
+    async def _send_desired(call: ServiceCall) -> None:
+        coordinators: list[MrSteamCoordinator] = list(hass.data.get(DOMAIN, {}).values())
+        wanted = call.data.get("thing_name")
+        for coordinator in coordinators:
+            for thing in coordinator.things:
+                if wanted in (None, thing):
+                    await coordinator.async_command(thing, call.data["fragment"], {})
+                    return
+        raise HomeAssistantError(f"No MrSteam unit found ({wanted or 'any'})")
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_SEND_DESIRED, _send_desired, schema=SEND_DESIRED_SCHEMA
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -33,6 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    _register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

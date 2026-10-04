@@ -60,7 +60,7 @@ class RoomTemp(MrSteamEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return raw_to_celsius(self.reported.get("deviceRoomTemp"))
+        return raw_to_celsius(self.reported.get("deviceRoomTemp"), hex_string=True)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -81,7 +81,7 @@ class SteamHeadTemp(MrSteamEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return raw_to_celsius(self.reported.get("deviceSteamTemp"))
+        return raw_to_celsius(self.reported.get("deviceSteamTemp"), hex_string=False)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

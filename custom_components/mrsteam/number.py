@@ -7,6 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -45,9 +46,22 @@ class SteamDuration(MrSteamEntity, NumberEntity):
         return {"requested": self.coordinator.is_pending(self.thing, "duration")}
 
     async def async_set_native_value(self, value: float) -> None:
+        # The controller reads a steam block without appSteamStatus as "off"
+        # (Oct 4 2026: a time-only update stopped a running session 3 of 3
+        # times), so the time always travels with appSteamStatus: true, and
+        # only while steam is believed to be running.
+        steam_on = self.coordinator.effective(
+            self.thing,
+            "steam",
+            self.reported.get("deviceSteamStatus") == "0001",
+        )
+        if not steam_on:
+            raise HomeAssistantError(
+                "Start steam first: duration can only be changed during a session"
+            )
         minutes = int(round(value))
         await self.coordinator.async_command(
             self.thing,
-            {"steam": {"appSteamTime": format(minutes, "04X")}},
+            {"steam": {"appSteamStatus": True, "appSteamTime": format(minutes, "04X")}},
             {"duration": minutes},
         )

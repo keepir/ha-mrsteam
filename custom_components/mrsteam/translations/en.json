@@ -58,5 +58,21 @@
         "name": "Chroma"
       }
     }
+  },
+  "services": {
+    "send_desired": {
+      "name": "Send desired state (test)",
+      "description": "Publish a raw state.desired fragment to the steam unit's shadow. For testing payloads.",
+      "fields": {
+        "fragment": {
+          "name": "Fragment",
+          "description": "Object placed under state.desired, e.g. {\"steam\": {\"appSteamStatus\": true}}"
+        },
+        "thing_name": {
+          "name": "Thing name",
+          "description": "Optional; defaults to the only unit."
+        }
+      }
+    }
   }
 }
