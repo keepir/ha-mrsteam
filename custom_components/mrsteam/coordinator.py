@@ -11,15 +11,13 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import MrSteamApi, MrSteamAuthError, MrSteamError
+from .api import MrSteamApi, MrSteamAuthError, MrSteamError, ReadsUnavailable
 from .const import (
     DOMAIN,
     PENDING_SECONDS,
     POLL_IDLE_HTTPS,
-    POLL_IDLE_MQTT,
-    POLL_RUNNING_HTTPS,
-    POLL_RUNNING_MQTT,
-    REFRESH_DELAYS,
+        POLL_RUNNING_HTTPS,
+        REFRESH_DELAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,25 +60,32 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         # {thing: {key: (value, expires_monotonic)}}
         self._pending: dict[str, dict[str, tuple[Any, float]]] = {}
         self._refresh_unsubs: list = []
+        self.reads_available = True
 
     async def _async_update_data(self) -> dict[str, dict[str, Any]]:
         data: dict[str, dict[str, Any]] = {}
         try:
             for thing in self.things:
                 data[thing] = await self.api.async_get_shadow(thing)
+        except ReadsUnavailable:
+            # No safe read path: stop polling, keep whatever we had.
+            self.reads_available = False
+            self.update_interval = None
+            return {
+                thing: (self.data or {}).get(thing) or {"desired": {}, "reported": {}}
+                for thing in self.things
+            }
         except MrSteamAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except MrSteamError as err:
             raise UpdateFailed(str(err)) from err
 
+        self.reads_available = True
         running = any(
             d.get("reported", {}).get("devices", {}).get("deviceSteamStatus") == "0001"
             for d in data.values()
         )
-        if self.api.https_read_ok is False:
-            secs = POLL_RUNNING_MQTT if running else POLL_IDLE_MQTT
-        else:
-            secs = POLL_RUNNING_HTTPS if running else POLL_IDLE_HTTPS
+        secs = POLL_RUNNING_HTTPS if running else POLL_IDLE_HTTPS
         self.update_interval = timedelta(seconds=secs)
         return data
 
@@ -105,6 +110,8 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     def is_pending(self, thing: str, key: str) -> bool:
         entry = self._pending.get(thing, {}).get(key)
+        if entry and not self.reads_available:
+            return False
         return bool(entry and time.monotonic() < entry[1])
 
     def effective(self, thing: str, key: str, actual: Any) -> Any:
@@ -113,6 +120,8 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         if entry is None:
             return actual
         value, expires = entry
+        if not self.reads_available:
+            return value  # assumed state: last commanded value stands
         if actual == value or time.monotonic() >= expires:
             self._pending[thing].pop(key, None)
             return actual
@@ -138,6 +147,8 @@ class MrSteamCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     @callback
     def _schedule_refreshes(self) -> None:
+        if not self.reads_available:
+            return
         for unsub in self._refresh_unsubs:
             unsub()
         self._refresh_unsubs = [

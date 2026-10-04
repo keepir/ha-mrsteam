@@ -16,13 +16,10 @@ DISCOVERY_PATH = "/user/get-user-devices"
 CONF_MODEL_NUMBER = "model_number"
 DEFAULT_MODEL_NUMBER = "SU-70"
 
-# Polling (seconds). HTTPS shadow reads are cheap and don't touch the
-# controller's MQTT session; the MQTT-read fallback (client_id == thingName)
-# can bump the wall controller, so it polls far less often.
+# Polling (seconds), HTTPS reads only. Reads with client_id == thingName are
+# never used: they kick the wall controller off AWS IoT.
 POLL_IDLE_HTTPS = 30
 POLL_RUNNING_HTTPS = 15
-POLL_IDLE_MQTT = 120
-POLL_RUNNING_MQTT = 30
 
 # Delayed refreshes after a command (seconds), per the handoff.
 REFRESH_DELAYS = (4, 12)

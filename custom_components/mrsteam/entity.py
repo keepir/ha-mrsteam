@@ -36,5 +36,9 @@ class MrSteamEntity(CoordinatorEntity[MrSteamCoordinator]):
         return self.coordinator.desired(self.thing)
 
     @property
+    def assumed_state(self) -> bool:
+        return not self.coordinator.reads_available
+
+    @property
     def available(self) -> bool:
         return super().available and self.thing in (self.coordinator.data or {})

@@ -20,9 +20,9 @@ Then Settings → Devices & services → Add integration → **MrSteam iSteamX**
 Target temperature is intentionally not exposed yet.
 
 ## Behaviour notes
-- **Reads:** HTTPS GetThingShadow with SigV4 Cognito-identity credentials. If AWS denies it, the integration logs a warning
-  and falls back to MQTT reads with `client_id == thingName` in short bursts, polling 120 s idle / 30 s while steaming
-  (HTTPS mode: 30 s / 15 s).
+- **Reads:** HTTPS GetThingShadow only. Reads that connect with `client_id == thingName` are never used — they
+  kick the wall controller off the cloud. If HTTPS is denied (current state), entities run in **assumed state**:
+  they show the last commanded value, with no polling.
 - **Commands:** MQTT over websockets, QoS 1, unique `app-ha<random>-dev` client ID, `clientToken: app-<thingName>`,
   partial `state.desired` only. Refreshes 4 s and 12 s after each command.
 - **Requested state:** a commanded value shows immediately (attribute `requested: true`) until the unit confirms it or

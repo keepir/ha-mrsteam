@@ -50,7 +50,7 @@ async def async_setup_entry(
     async_add_entities(
         ChromaLight(coordinator, t)
         for t in coordinator.things
-        if coordinator.reported(t).get("deviceChromaConnected")
+        if coordinator.reported(t).get("deviceChromaConnected") is not False
     )
 
 

@@ -1,8 +1,9 @@
 """MrSteam iSteamX cloud API (AWS Cognito + AWS IoT device shadow).
 
-Read path:   HTTPS GetThingShadow (SigV4, Cognito identity creds) first.
-             If AWS denies it, fall back to the proven MQTT read with
-             client_id == thingName, in short connect/read/disconnect bursts.
+Read path:   HTTPS GetThingShadow (SigV4, Cognito identity creds) only.
+             Reads with client_id == thingName are NEVER used: they kick the
+             wall controller off AWS IoT. If HTTPS is denied, entities run in
+             assumed state.
 Command path: MQTT publish to $aws/things/<thing>/shadow/update, QoS 1,
              unique client id app-ha<random>-dev, clientToken app-<thing>.
              Only state.desired is ever written.
@@ -53,6 +54,10 @@ class MrSteamAuthError(MrSteamError):
 
 class ReadDenied(MrSteamError):
     """HTTPS shadow read not permitted for this identity."""
+
+
+class ReadsUnavailable(MrSteamError):
+    """No safe read path; run in assumed state."""
 
 
 # ── SigV4 presigned websocket URL for AWS IoT ───────────────────────────────
@@ -335,56 +340,25 @@ class MrSteamApi:
         finally:
             client.loop_stop()
 
-    def _get_shadow_mqtt_sync(self, thing: str) -> dict[str, Any]:
-        """Proven fallback: client_id == thingName, short burst."""
-        base = f"$aws/things/{thing}/shadow/get"
-        got = threading.Event()
-        subscribed = threading.Event()
-        box: dict[str, Any] = {}
-
-        client = self._mqtt_client(thing)
-
-        def _on_message(_c, _u, msg):
-            box["topic"] = msg.topic
-            box["payload"] = msg.payload
-            got.set()
-
-        def _on_subscribe(*_args):
-            subscribed.set()
-
-        client.on_message = _on_message
-        client.on_subscribe = _on_subscribe
-        self._connect(client)
-        try:
-            client.subscribe([(base + "/accepted", 1), (base + "/rejected", 1)])
-            if not subscribed.wait(MQTT_TIMEOUT):
-                raise MrSteamError("MQTT subscribe timed out")
-            client.publish(base, "", qos=1)
-            if not got.wait(MQTT_TIMEOUT):
-                raise MrSteamError("MQTT shadow/get timed out")
-        finally:
-            self._close(client)
-        if box["topic"].endswith("/rejected"):
-            raise MrSteamError(f"shadow/get rejected: {box['payload']!r}")
-        return json.loads(box["payload"])
-
     def _get_shadow_sync(self, thing: str) -> dict[str, Any]:
-        if self.https_read_ok is not False:
-            try:
-                shadow = self._get_shadow_https_sync(thing)
-            except ReadDenied as err:
-                _LOGGER.warning(
-                    "HTTPS shadow read denied (%s); falling back to MQTT reads "
-                    "with client_id == thingName at a slower poll rate",
-                    err,
-                )
-                self.https_read_ok = False
-            else:
-                if self.https_read_ok is None:
-                    _LOGGER.info("HTTPS shadow reads are allowed; using them")
-                self.https_read_ok = True
-                return shadow
-        return self._get_shadow_mqtt_sync(thing)
+        """HTTPS only. Never connect with client_id == thingName: that
+        kicks the wall controller off AWS IoT (confirmed Oct 4 2026)."""
+        if self.https_read_ok is False:
+            raise ReadsUnavailable("HTTPS shadow reads denied for this identity")
+        try:
+            shadow = self._get_shadow_https_sync(thing)
+        except ReadDenied as err:
+            _LOGGER.warning(
+                "HTTPS shadow read denied (%s). Reads are disabled; entities run "
+                "in assumed state (last commanded value) until a safe read path exists",
+                err,
+            )
+            self.https_read_ok = False
+            raise ReadsUnavailable(str(err)) from err
+        if self.https_read_ok is None:
+            _LOGGER.info("HTTPS shadow reads are allowed; using them")
+        self.https_read_ok = True
+        return shadow
 
     async def async_get_shadow(self, thing: str) -> dict[str, Any]:
         """Return the shadow 'state' block: {'desired':..., 'reported':...}."""
