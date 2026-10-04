@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MrSteam account",
+        "description": "Sign in with the account you use in the MrSteam app.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "model_number": "Model number"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-enter MrSteam password",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the MrSteam cloud.",
+      "no_devices": "No steam units found on this account for that model number.",
+      "unknown": "Unexpected error \u2014 check the logs."
+    },
+    "abort": {
+      "already_configured": "This account is already set up.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "entity": {
+    "switch": {
+      "steam": {
+        "name": "Steam"
+      },
+      "aroma": {
+        "name": "Aroma"
+      }
+    },
+    "number": {
+      "steam_duration": {
+        "name": "Steam duration"
+      }
+    },
+    "sensor": {
+      "remaining_time": {
+        "name": "Steam time remaining"
+      },
+      "room_temperature": {
+        "name": "Room temperature"
+      },
+      "steam_head_temperature": {
+        "name": "Steam head temperature"
+      }
+    },
+    "light": {
+      "chroma": {
+        "name": "Chroma"
+      }
+    }
+  }
+}

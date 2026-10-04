@@ -1,0 +1,11 @@
+{
+  "domain": "mrsteam",
+  "name": "MrSteam iSteamX",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": ["pycognito>=2023.5.0"],
+  "version": "0.1.0"
+}
